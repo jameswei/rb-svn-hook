@@ -10,6 +10,8 @@ import re
 import shelve
 import datetime
 import ConfigParser
+import urllib
+from format_diff import format_diff
 try:
     import json
 except ImportError:
@@ -62,6 +64,7 @@ def debug(s):
 RB_SERVER = conf.get('reviewboard', 'url')
 USERNAME = conf.get('reviewboard', 'username')
 PASSWORD = conf.get('reviewboard', 'password')
+
 
 MIN_SHIP_IT_COUNT = conf.getint('rule', 'min_ship_it_count')
 MIN_EXPERT_SHIP_IT_COUNT = conf.getint('rule', 'min_expert_ship_it_count')
@@ -137,6 +140,7 @@ def check_rb(repos, txn):
     opener = Opener(RB_SERVER, USERNAME, PASSWORD)
     rsp = opener.open(path, {})
     reviews = json.loads(rsp)
+    debug(reviews)
     if reviews['stat'] != 'ok':
         raise SvnError, "get reviews error."
     ship_it_users = set()
@@ -153,6 +157,16 @@ def check_rb(repos, txn):
             expert_count += 1
     if expert_count < MIN_EXPERT_SHIP_IT_COUNT:
         raise SvnError, 'not enough of key user ship_it.'
+
+    svndiff = make_svnlook_cmd("diff", repos, txn)
+    diff_from_svn = get_cmd_output(svndiff)
+
+    diff_from_svn = format_diff(diff_from_svn)
+    diff_from_rb = format_diff(get_rb_diff(rid))
+    debug("diff_from_svn:\n" + diff_from_rb)
+    debug("diff_from_svn:\n" + diff_from_svn)
+    if str(diff_from_rb) != str(diff_from_svn):
+        raise SvnError, 'the diffs do not match.'
     add_to_rid_db(rid)
 
 def is_ignorable(changed):
@@ -169,14 +183,25 @@ def is_ignorable(changed):
             return False
     return True
 
+def get_rb_diff(rid):
+    diff_path = "r/%s/diff/raw" % rid
+    diff_url = urljoin(RB_SERVER, diff_path)
+    response = urllib.urlopen(diff_url)
+    diff =  response.read()
+    return diff
+
 def _main():
     debug('command:' + str(sys.argv))
     repos = sys.argv[1]
     txn = sys.argv[2]
 
+    debug("repos:" + repos)
+    debug("txn:" + txn)
+
     svnlook = make_svnlook_cmd('changed', repos, txn)
     changed = get_cmd_output(svnlook)
     debug(changed)
+
 
     if is_ignorable(changed):
         return
@@ -205,4 +230,3 @@ def main():
         exit(1)
     else:
         exit(0)
-
