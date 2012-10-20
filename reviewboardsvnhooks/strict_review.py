@@ -11,7 +11,7 @@ import shelve
 import datetime
 import ConfigParser
 import urllib
-from format_diff import format_diff
+
 try:
     import json
 except ImportError:
@@ -184,11 +184,69 @@ def is_ignorable(changed):
     return True
 
 def get_rb_diff(rid):
+    # Log in reviewboard
+    login_path = "account/login/"
+    cj = cookielib.CookieJar()
+    opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cj))
+    urllib2.install_opener(opener)
+    url = urljoin(RB_SERVER, login_path)
+    resp = urllib2.urlopen(url)
+    data = urllib.urlencode(dict(username=USERNAME, password=PASSWORD))
+    page = opener.open(url, data).read()
+
+    if page.find("<title>Log In") != -1:
+        raise SvnError, "Login failed!"
+        return
+
     diff_path = "r/%s/diff/raw" % rid
     diff_url = urljoin(RB_SERVER, diff_path)
-    response = urllib.urlopen(diff_url)
+    response = urllib2.open(diff_url)
     diff =  response.read()
     return diff
+
+def format_diff(diff):
+    def ignore_del_diff(li):
+        '''
+        the patch generated from svn client, do not contained the del file info.
+        So need to del these info in the patch generated from svn server.
+        @param li:
+        @return:
+        '''
+        l = []
+        for i in li:
+            if not i[0].startswith("Deleted: "): # and not i[0].startswith("Added: "):
+                l.append(i)
+        return l
+
+    splitIndex = []
+    noBlankLineDiff = []
+    fileSlice = []
+    diffList = diff.splitlines()
+    formatedContent = ""
+
+    for i in diffList: # delete blank lines in patch file
+        if i.strip():
+            noBlankLineDiff.append(i)
+
+    for n, c in enumerate(noBlankLineDiff):
+        if c == "===================================================================":
+            splitIndex.append(n)
+        else:
+            continue
+
+    for x, y in enumerate(splitIndex):
+        if x < len(splitIndex) - 1:
+            start = int(y) - 1
+            end = int(splitIndex[x+1]) - 1
+            fileSlice.append(noBlankLineDiff[start: end])
+        else:
+            start = int(y) - 1
+            fileSlice.append(noBlankLineDiff[start:])
+
+    ignored = ignore_del_diff(fileSlice)
+    for i in xrange(len(ignored)):
+        formatedContent +=  "\n".join(ignored[i][4:]) + "\n"
+    return formatedContent
 
 def _main():
     debug('command:' + str(sys.argv))
